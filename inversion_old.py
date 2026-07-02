@@ -1,6 +1,4 @@
 import cv2 as cv
-import torch.nn.functional as nnF
-import open_clip
 from scripts.demo.streamlit_helpers import *
 from sgm.modules.diffusionmodules.sampling import EulerAncestralSampler
 from lossbuilder import LossBuilder
@@ -76,12 +74,7 @@ def inversion(
         H=512,
         W=512,
         seed=0,
-        filter=None,
-        clip_model=None,
-        clip_weight=0.0,
-        temp_weight=0.0,
-        color_weight=0.0,
-        baseline=False
+        filter=None
 ):
     F = 8
     C = 4
@@ -113,25 +106,6 @@ def inversion(
             img = img.unsqueeze(dim=0)
             img = img.cuda()
             return img
-
-        def clip_preprocess(img_tensor):
-            """Convert [-1,1] image tensor to CLIP input format [0,1] + normalize.
-               img_tensor: [1, C, H, W] in [-1, 1], differentiable."""
-            img_tensor = (img_tensor + 1.0) / 2.0  # [-1, 1] -> [0, 1]
-            img_tensor = nnF.interpolate(img_tensor, size=(224, 224), mode='bilinear', align_corners=False)
-            mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=img_tensor.device).view(1, 3, 1, 1)
-            std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=img_tensor.device).view(1, 3, 1, 1)
-            img_tensor = (img_tensor - mean) / std
-            return img_tensor
-
-        def color_stats_loss(pred, gt):
-            """Color statistics loss: match per-channel mean and std.
-               pred, gt: [1, 3, H, W] in [-1, 1], differentiable."""
-            pred_mean = pred.mean(dim=[2, 3])  # [1, 3]
-            pred_std = pred.std(dim=[2, 3])    # [1, 3]
-            gt_mean = gt.mean(dim=[2, 3])
-            gt_std = gt.std(dim=[2, 3])
-            return nnF.mse_loss(pred_mean, gt_mean) + nnF.mse_loss(pred_std, gt_std)
 
         uc = None
         rand_noise = seeded_randn(shape, seed)
@@ -171,16 +145,14 @@ def inversion(
             latest_min_loss = 1e9
 
             # logs and results path
-            suffix = '_baseline' if baseline else ''
-            suffix = suffix + args.suffix
-            prompt_path = os.path.join('/root/autodl-tmp/sky', 'results/rank{}_interval{}{}/'.format(rank, interval, suffix))
+            prompt_path = os.path.join(frame_path, 'results/rank{}_interval{}/'.format(rank, interval))
             log_path = os.path.join(prompt_path,'{:05d}'.format(f_id))
             if not os.path.exists(log_path):
                 os.makedirs(log_path)
             log_output = open(os.path.join(log_path,'log.txt'), 'a')
 
             if f_id > 0:
-                ckpt_prev = torch.load(os.path.join(prompt_path,'{:05d}/ckpt.pth'.format(f_id - interval)), weights_only=False)
+                ckpt_prev = torch.load(os.path.join(prompt_path,'{:05d}/ckpt.pth'.format(f_id - interval)))
                 U_prev, V_prev = ckpt_prev["U"], ckpt_prev["V"]
                 prev_frame = ckpt_prev["z"]
                 # Subsequent frames require fewer iterations.
@@ -202,7 +174,6 @@ def inversion(
 
             for iter in range(total_iterations):
                 loss_list = {}
-                clip_embed_buffer = []  # buffer for temporal direction consistency
                 for step in step_list:
                     # Fake Quantification
                     Quant_Param_U.update(U)
@@ -241,49 +212,13 @@ def inversion(
                     # Combine the perceptual loss and reconstruction loss.
                     loss = 0.2 * lpips_loss + 0.8 * mse_loss(samples_x, gt)
 
-                    # CLIP semantic loss + temporal consistency (if enabled)
-                    clip_loss_val = 0.0
-                    temp_loss_val = 0.0
-                    color_loss_val = 0.0
-                    if clip_model is not None and (clip_weight > 0 or (temp_weight > 0 and f_id > 0)):
-                        pred_clip = clip_preprocess(samples_x)
-                        pred_embed = nnF.normalize(clip_model.encode_image(pred_clip), dim=-1)
-
-                        # CLIP semantic loss (align with ground truth)
-                        if clip_weight > 0:
-                            gt_clip = clip_preprocess(gt)
-                            gt_embed = nnF.normalize(clip_model.encode_image(gt_clip), dim=-1)
-                            clip_loss_val = (1.0 - (gt_embed * pred_embed).sum(dim=-1)).mean()
-                            loss = loss + clip_weight * clip_loss_val
-
-                        # Temporal direction consistency loss
-                        # Encourages frame-to-frame CLIP embedding changes to be
-                        # directionally consistent (smooth semantic transitions).
-                        if temp_weight > 0 and f_id > 0:
-                            clip_embed_buffer.append((cur_id, pred_embed))
-                            if len(clip_embed_buffer) >= 3:
-                                id_a, emb_a = clip_embed_buffer[-3]
-                                id_b, emb_b = clip_embed_buffer[-2]
-                                id_c, emb_c = clip_embed_buffer[-1]
-                                # Only compute if cur_ids are strictly consecutive
-                                if id_b == id_a + 1 and id_c == id_b + 1:
-                                    dir_ab = nnF.normalize(emb_b.detach() - emb_a.detach(), dim=-1)
-                                    dir_bc = nnF.normalize(emb_c - emb_b.detach(), dim=-1)
-                                    temp_loss_val = (1.0 - (dir_ab * dir_bc).sum(dim=-1)).mean()
-                                    loss = loss + temp_weight * temp_loss_val
-
-                    # Color statistics loss (match per-channel mean and std)
-                    if color_weight > 0:
-                        color_loss_val = color_stats_loss(samples_x, gt)
-                        loss = loss + color_weight * color_loss_val
-
                     # regularization
                     loss_regu = torch.mean(torch.abs(c['crossattn']))
                     loss = loss + 0.1 * loss_regu
 
                     # logging
-                    print('iter: {}, cur_id: {}, loss: {}, clip_loss: {:.4f}, temp_loss: {:.4f}, color_loss: {:.4f}, c_max: {}, c_mean: {}, c_std: {}'.format(iter, cur_id, loss, clip_loss_val, temp_loss_val, color_loss_val, c['crossattn'].max(), c['crossattn'].mean(), c['crossattn'].std()))
-                    log_output.write('iter: {}, cur_id: {}, loss: {}, clip_loss: {:.4f}, temp_loss: {:.4f}, color_loss: {:.4f}, c_max: {}, c_mean: {}, c_std: {}\n'.format(iter, cur_id, loss, clip_loss_val, temp_loss_val, color_loss_val, c['crossattn'].max(), c['crossattn'].mean(), c['crossattn'].std()))
+                    print('iter: {}, cur_id: {}, loss: {}, c_max: {}, c_mean: {}, c_std: {}'.format(iter, cur_id, loss, c['crossattn'].max(), c['crossattn'].mean(), c['crossattn'].std()))
+                    log_output.write('iter: {}, cur_id: {}, loss: {}, c_max: {}, c_mean: {}, c_std: {}\n'.format(iter, cur_id, loss, c['crossattn'].max(), c['crossattn'].mean(), c['crossattn'].std()))
                     log_output.flush()
 
                     # saving the generated frames
@@ -369,23 +304,7 @@ if __name__ == "__main__":
     parser.add_argument('-max_id', type=int, default=140)
     parser.add_argument('-rank', type=int, default="8")
     parser.add_argument('-interval', type=int, default="10")
-    parser.add_argument('-clip_weight', type=float, default=0.5,
-                        help='Weight for CLIP semantic loss (0.0 to disable)')
-    parser.add_argument('-temp_weight', type=float, default=0.1,
-                        help='Weight for temporal direction consistency loss (0.0 to disable)')
-    parser.add_argument('-color_weight', type=float, default=0.3,
-                        help='Weight for color statistics loss (match per-channel mean/std, 0.0 to disable)')
-    parser.add_argument('-suffix', type=str, default='',
-                        help='Optional suffix appended to the results directory name (e.g. "_color")')
-    parser.add_argument('--baseline', action='store_true',
-                        help='Use only original losses (LPIPS + MSE + reg), no CLIP')
     args = parser.parse_args()
-
-    if args.baseline:
-        print("Baseline mode: disabling CLIP semantic, temporal, and color losses.")
-        args.clip_weight = 0.0
-        args.temp_weight = 0.0
-        args.color_weight = 0.0
 
     # Set up and load the models.
     version_dict = VERSION2SPECS['SD-Turbo']
@@ -406,20 +325,7 @@ if __name__ == "__main__":
     seed_ = 88
     sampler.noise_sampler = SeededNoise(seed=seed_)
 
-    # Load CLIP model for semantic loss if enabled
-    clip_model = None
-    if args.clip_weight > 0:
-        print("Loading CLIP model (ViT-B/32) for semantic loss...")
-        clip_model, _, _ = open_clip.create_model_and_transforms("ViT-B-32", pretrained="laion2b_s34b_b79k")
-        clip_model = clip_model.cuda().eval()
-        for p in clip_model.parameters():
-            p.requires_grad_(False)
-        print("CLIP model loaded.")
-
     # Inversion: from video to prompts
     inversion(
-       model, sampler, decoder=taesd.decoder, rank=args.rank, interval=args.interval,
-       frame_path=args.frame_path, max_id=args.max_id, H=512, W=512, seed=seed_,
-       filter=state.get("filter"), clip_model=clip_model, clip_weight=args.clip_weight,
-       temp_weight=args.temp_weight, color_weight=args.color_weight, baseline=args.baseline
+       model, sampler, decoder=taesd.decoder, rank=args.rank, interval=args.interval, frame_path=args.frame_path, max_id=args.max_id, H=512, W=512, seed=seed_, filter=state.get("filter")
     )
