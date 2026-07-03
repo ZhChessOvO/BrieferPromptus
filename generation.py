@@ -66,6 +66,23 @@ class SeededNoise:
         self.seed = self.seed + 1
         return seeded_randn(x.shape, self.seed)
 
+
+def slerp(a, b, t, eps=1e-5):
+    """球面线性插值, 沿最后一维计算."""
+    a_n = a / (a.norm(dim=-1, keepdim=True) + 1e-12)
+    b_n = b / (b.norm(dim=-1, keepdim=True) + 1e-12)
+    cos_theta = (a_n * b_n).sum(dim=-1, keepdim=True).clamp(-1.0, 1.0)
+    theta = torch.acos(cos_theta)
+    sin_theta = torch.sin(theta)
+    use_lerp = sin_theta < eps
+    factor_a = torch.sin((1.0 - t) * theta) / sin_theta
+    factor_b = torch.sin(t * theta) / sin_theta
+    result = factor_a * a + factor_b * b
+    lerp_result = (1.0 - t) * a + t * b
+    result = torch.where(use_lerp.expand_as(result), lerp_result, result)
+    return result
+
+
 @torch.no_grad()
 def generation(
         model,
@@ -77,7 +94,8 @@ def generation(
         H=512,
         W=512,
         seed=0,
-        filter=None
+        filter=None,
+        slerp_mode=True
 ):
     F = 8
     C = 4
@@ -181,6 +199,11 @@ def generation(
             Quant_Param_V_next.zero_point = prompt_next['V_zero_point']
             V_next = Quant_Param_V_next.dequantize_tensor(V_next)
 
+            # 加载逐秩活跃度权重 (向后兼容: 旧 prompt 无 weights 字段)
+            weights = prompt_curr.get('weights', None)
+            if weights is not None:
+                weights = weights.cuda()
+
             if prev_frame is None:
                 # initialize for the first frame
                 prev_frame = torch.load(os.path.join(prompt_dir, 'init.pth'))
@@ -191,11 +214,19 @@ def generation(
                 prev_frame = generate(randn=z, c=prompt, gt=gt, idx=id_curr)
 
             z = (prev_frame * sigma + rand_noise * (1 - sigma))
-            # linear interpolation on keyframe prompts, approximating the intermediate prompts.
+            # 逐秩差异化插值
             for step in range(1, interval + 1):
-                factor = 1 / interval
-                u = (1 - step * factor) * U_curr + (step * factor) * U_next
-                v = (1 - step * factor) * V_curr + (step * factor) * V_next
+                t = step / interval  # 归一化进度 [0, 1]
+                t_i = torch.tensor(t, device=U_curr.device)  # 标量张量, 统一速率
+
+                if slerp_mode:
+                    # Slerp: U 转置后沿最后一维插值, V 直接沿最后一维
+                    u = slerp(U_curr.T, U_next.T, t_i.view(-1, 1)).T
+                    v = slerp(V_curr, V_next, t_i.view(-1, 1))
+                else:
+                    # 线性插值 (原始行为或兼容)
+                    u = (1 - t_i.view(1, -1)) * U_curr + t_i.view(1, -1) * U_next
+                    v = (1 - t_i.view(-1, 1)) * V_curr + t_i.view(-1, 1) * V_next
                 # prompt composition
                 c = (u @ v / np.sqrt(rank)).unsqueeze(dim=0)
                 prompt = {'crossattn': c}
@@ -211,6 +242,10 @@ if __name__ == "__main__":
     parser.add_argument('-frame_path', type=str, default="data/sky")
     parser.add_argument('-rank', type=int, default="8")
     parser.add_argument('-interval', type=int, default="10")
+    parser.add_argument('--slerp', action='store_true', default=True,
+                        help='Use spherical linear interpolation (default: True)')
+    parser.add_argument('--no-slerp', action='store_false', dest='slerp',
+                        help='Use linear interpolation instead of slerp')
     args = parser.parse_args()
 
     # Set up and load the models.
@@ -234,5 +269,7 @@ if __name__ == "__main__":
 
     # generating frames from prompts
     generation(
-       model, sampler, decoder=taesd.decoder, rank=args.rank, interval=args.interval, frame_path=args.frame_path, H=512, W=512, seed=seed_, filter=state.get("filter")
+       model, sampler, decoder=taesd.decoder, rank=args.rank, interval=args.interval,
+       frame_path=args.frame_path, H=512, W=512, seed=seed_, filter=state.get("filter"),
+       slerp_mode=args.slerp
     )

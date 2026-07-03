@@ -22,7 +22,7 @@ from PIL import Image
 import lpips
 
 # ===== Config =====
-DATA_DIR = "/root/autodl-tmp/sky/results/rank4_interval10"
+DATA_DIR = "/root/autodl-tmp/sky/results/rank4_interval10_color"
 GT_DIR = "/root/Promptus/data/sky"
 ITER_STEP = "01490"
 TOTAL_IDS = 101  # id 00000 ~ 00130 (inclusive)
@@ -37,12 +37,14 @@ def load_image(path):
 
 def compute_psnr(img1, img2):
     """Compute PSNR between two images."""
-    return psnr(img1, img2, data_range=1.0)
+    result = psnr(img1, img2, data_range=1.0)
+    return result
 
 
 def compute_ssim(img1, img2):
     """Compute SSIM between two images."""
-    return ssim(img1, img2, data_range=1.0, channel_axis=-1)
+    result = ssim(img1, img2, data_range=1.0, channel_axis=-1)
+    return result
 
 
 def compute_lpips(img1, img2, lpips_model):
@@ -65,10 +67,15 @@ def get_result_path(id_val):
       ...
       id=121~130 -> folder 00130
     """
-    folder = ((id_val + 9) // 10) * 10
-    result_path = os.path.join(
-        DATA_DIR, f"{folder:05d}", f"iter_{ITER_STEP}_id_{id_val:05d}.png"
-    )
+    if id_val == 0:
+        result_path = os.path.join(
+            DATA_DIR, "00000", "iter_09990_id_00000.png"
+        )
+    else:
+        folder = ((id_val + 9) // 10) * 10
+        result_path = os.path.join(
+            DATA_DIR, f"{folder:05d}", f"iter_{ITER_STEP}_id_{id_val:05d}.png"
+        )
     return result_path
 
 
