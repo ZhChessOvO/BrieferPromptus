@@ -22,6 +22,7 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import structural_similarity as ssim
 from PIL import Image
 from diffusers import AutoencoderTiny
+from torchvision.utils import save_image
 from scripts.demo.streamlit_helpers import *
 from sgm.modules.diffusionmodules.sampling import EulerAncestralSampler
 from quantization import QParam
@@ -319,6 +320,15 @@ def main():
               f"SSIM={metrics['ssim_mean']:.4f}±{metrics['ssim_std']:.4f}, "
               f"LPIPS={metrics['lpips_mean']:.4f}±{metrics['lpips_std']:.4f}, "
               f"frames={metrics['n_frames']}")
+
+        # Save first frame to image_demo
+        save_dir = "/root/autodl-tmp/image_demo"
+        os.makedirs(save_dir, exist_ok=True)
+        first_fid = min(frames.keys())
+        first_img_tensor = torch.from_numpy(frames[first_fid]).permute(2, 0, 1).unsqueeze(0)  # (1, 3, H, W)
+        save_path = os.path.join(save_dir, f"frame_rank{trunc_rank}.png")
+        save_image(first_img_tensor, save_path)
+        print(f"  Saved first frame (id={first_fid}) to {save_path}")
 
     # Summary table
     print("\n" + "=" * 70)

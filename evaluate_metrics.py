@@ -22,9 +22,9 @@ from PIL import Image
 import lpips
 
 # ===== Config =====
-DATA_DIR = "/root/autodl-tmp/sky/results/rank8_interval10_baseline"
+DATA_DIR = "/root/autodl-tmp/sky/results/rank16_interval10_baseline_baseline"
 GT_DIR = "/root/Promptus/data/sky"
-ITER_STEP = "01450"
+ITER_STEP = "00740"
 TOTAL_IDS = 131  # id 00000 ~ 00130 (inclusive)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
