@@ -1,1 +1,1 @@
-# ScalablePromptus: Towards Scalable and Packet-Loss Resilient Visual Streaming with Semantic Regularization
+# ScalablePromptus: Scalable and High-Fidelity Prompt-Based Video Streaming

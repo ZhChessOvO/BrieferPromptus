@@ -229,7 +229,7 @@ def inversion(
         # Inversion.
         suffix = '_baseline' if baseline else ''
         suffix = suffix + args.suffix
-        prompt_path = os.path.join('/root/autodl-tmp/jockey', 'results/rank{}_interval{}{}/'.format(rank, interval, suffix))
+        prompt_path = os.path.join('/root/autodl-tmp/shake', 'results/rank{}_interval{}{}/'.format(rank, interval, suffix))
 
         for f_id in range(0, max_id, interval):
             # Initialize the low-rank factor U (always full rank).
