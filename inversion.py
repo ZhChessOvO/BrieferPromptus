@@ -180,7 +180,7 @@ def inversion(
         # Inversion.
         suffix = '_baseline' if baseline else ''
         suffix = suffix + args.suffix
-        prompt_path = os.path.join('/root/autodl-tmp/shake', 'results/rank{}_interval{}{}/'.format(rank, interval, suffix))
+        prompt_path = os.path.join('/root/autodl-tmp/uvg', 'results/rank{}_interval{}{}/'.format(rank, interval, suffix))
 
         for f_id in range(0, max_id, interval):
             # Initialize the low-rank factor U.
@@ -399,7 +399,7 @@ if __name__ == "__main__":
     parser.add_argument('-interval', type=int, default="10")
     parser.add_argument('-clip_weight', type=float, default=0.5,
                         help='Weight for CLIP semantic loss (0.0 to disable)')
-    parser.add_argument('-temp_weight', type=float, default=0.1,
+    parser.add_argument('-temp_weight', type=float, default=0.0,
                         help='Weight for temporal direction consistency loss (0.0 to disable)')
     parser.add_argument('-color_weight', type=float, default=0.3,
                         help='Weight for color statistics loss (match per-channel mean/std, 0.0 to disable)')

@@ -1,4 +1,4 @@
-name: promptus
+name: scalablepromptus
 channels:
   - pytorch
   - nvidia
@@ -182,4 +182,4 @@ dependencies:
       - wcwidth==0.2.13
       - yarl==1.18.3
       - zipp==3.21.0
-prefix: /home/wjk/.conda/envs/promptus
+prefix: /root/miniconda3/envs/scalablepromptus
