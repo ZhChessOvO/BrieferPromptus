@@ -145,7 +145,7 @@ Simulate video streaming under packet loss conditions:
 
 ```bash
 python simulate_packetloss.py \
-    -frame_path "/root/Promptus/data/uvg" \
+    -frame_path "data/uvg" \
     -prompt_dir "/root/autodl-tmp/uvg/results/rank16_interval10_dropout4" \
     -rank 16 \
     -interval 10 \
